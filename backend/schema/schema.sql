@@ -1,0 +1,25 @@
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT UNIQUE NOT NULL,
+  wins INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  started_by INTEGER,
+  start_time DATETIME,
+  end_time DATETIME,
+  winning_number INTEGER,
+  FOREIGN KEY(started_by) REFERENCES users(id)
+);
+CREATE TABLE IF NOT EXISTS session_users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER,
+  user_id INTEGER,
+  picked_number INTEGER,
+  is_winner INTEGER DEFAULT 0,
+  joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  left_at DATETIME,
+  FOREIGN KEY(session_id) REFERENCES sessions(id),
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
