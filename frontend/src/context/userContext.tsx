@@ -20,6 +20,8 @@ interface UserContextType {
   logout: () => void;
 }
 
+const API_BASE = import.meta.env.VITE_API_URL;
+
 const getStoredUser = (): User => {
   const token = sessionStorage.getItem("iGamingToken");
   const username = sessionStorage.getItem("iGamingUser");
@@ -45,7 +47,9 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
   // Listen for SSE
   useEffect(() => {
-    const eventSource = new window.EventSource("/api/session/stream");
+    const eventSource = new window.EventSource(
+      `${API_BASE}/api/session/stream`,
+    );
     eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (
@@ -76,7 +80,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   }, [user]);
 
   const login = async (username: string) => {
-    const res = await fetch("/api/login", {
+    const res = await fetch(`${API_BASE}/api/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username }),

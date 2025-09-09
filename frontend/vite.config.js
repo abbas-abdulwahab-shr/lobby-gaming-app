@@ -6,8 +6,9 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "https://lobby-gaming-app.onrender.com",
+        target: "http://localhost:4000",
         changeOrigin: true,
+        secure: false,
       },
     },
   },

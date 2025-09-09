@@ -3,8 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useUser } from "../context/userContext";
 
+const API_BASE = import.meta.env.VITE_API_URL;
+
 const fetchLeaderboard = async (token: string) => {
-  const res = await fetch("/api/players/top", {
+  const res = await fetch(`${API_BASE}/api/players/top`, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -15,7 +17,7 @@ const fetchLeaderboard = async (token: string) => {
 };
 
 const fetchGroupedWinners = async (token: string, period: string) => {
-  const res = await fetch(`/api/winners/grouped?period=${period}`, {
+  const res = await fetch(`${API_BASE}/api/winners/grouped?period=${period}`, {
     headers: {
       Authorization: `Bearer ${token}`,
     },

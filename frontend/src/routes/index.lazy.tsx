@@ -4,6 +4,8 @@ import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { usePrepTimer } from "../context/prepTimerContext";
 
+const API_BASE = import.meta.env.VITE_API_URL;
+
 const Index: React.FC = () => {
   const { user } = useUser();
   const router = useRouter();
@@ -20,7 +22,7 @@ const Index: React.FC = () => {
 
     setLoading(true);
     try {
-      const res = await fetch("/api/session/start", {
+      const res = await fetch(`${API_BASE}/api/session/start`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

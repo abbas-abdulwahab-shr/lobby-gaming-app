@@ -4,6 +4,8 @@ import { useMutation } from "@tanstack/react-query";
 import { useUser } from "../context/userContext";
 import { usePrepTimer } from "../context/prepTimerContext";
 
+const API_BASE = import.meta.env.VITE_API_URL;
+
 const Game: React.FC = () => {
   const { user } = useUser();
   const { prepSeconds, prepActive } = usePrepTimer();
@@ -24,7 +26,7 @@ const Game: React.FC = () => {
   const mutation = useMutation({
     mutationFn: async (pick: number) => {
       if (!user) throw new Error("Not logged in");
-      const res = await fetch("/api/game/pick", {
+      const res = await fetch(`${API_BASE}/api/game/pick`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -44,7 +46,7 @@ const Game: React.FC = () => {
 
   // SSE integration
   useEffect(() => {
-    const eventSource = new EventSource("/api/session/stream");
+    const eventSource = new EventSource(`${API_BASE}/api/session/stream`);
     eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
       switch (data.type) {
@@ -91,7 +93,7 @@ const Game: React.FC = () => {
   const handleJoinSession = async () => {
     if (!user) return;
     try {
-      const res = await fetch("/api/session/join", {
+      const res = await fetch(`${API_BASE}/api/session/join`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
