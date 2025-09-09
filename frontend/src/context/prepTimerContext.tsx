@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 
+const API_BASE = import.meta.env.VITE_API_URL;
+
 interface PrepTimerContextType {
   prepSeconds: number;
   prepActive: boolean;
@@ -22,20 +24,19 @@ export const PrepTimerProvider: React.FC<{ children: React.ReactNode }> = ({
   const [activeSession, setActiveSession] = useState(false);
 
   useEffect(() => {
-    const eventSource = new EventSource("/api/session/stream");
+    const eventSource = new EventSource(`${API_BASE}/api/session/stream`);
     eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === "session_started") {
         setActiveSession(true);
+        setPrepSeconds(0);
+        setPrepActive(false);
       } else if (data.type === "session_ended") {
         setActiveSession(false);
       } else if (data.type === "prep_timer_update") {
         setPrepSeconds(data.seconds_remaining);
         setPrepActive(true);
       } else if (data.type === "prep_timer_done") {
-        setPrepSeconds(0);
-        setPrepActive(false);
-      } else if (data.type === "session_started") {
         setPrepSeconds(0);
         setPrepActive(false);
       }
