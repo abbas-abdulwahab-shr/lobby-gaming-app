@@ -301,12 +301,12 @@ const Game: React.FC = () => {
           <br />
           return to the lobby.
         </p>
-        <a
-          href="/"
+        <button
+          onClick={() => router.navigate({ to: "/" })}
           className="bg-blue-600 text-white px-6 py-2 rounded-md font-semibold hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
         >
           Return to Lobby
-        </a>
+        </button>
         <div className="mt-4 flex flex-col items-center">
           <span className="text-2xl font-bold text-gray-800">
             Thanks for playing!
