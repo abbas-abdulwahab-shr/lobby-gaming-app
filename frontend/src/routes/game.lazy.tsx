@@ -256,7 +256,7 @@ const Game: React.FC = () => {
             </div>
             <div className="flex flex-col items-center gap-2 w-full mt-4">
               <span className="text-gray-500 text-base">
-                New session starts in
+                New session will be available in
               </span>
               <span
                 className="text-4xl font-mono font-bold text-red-600 animate-pulse"
