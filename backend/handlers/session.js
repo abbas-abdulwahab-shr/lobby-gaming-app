@@ -42,7 +42,14 @@ export async function startSessionHandler(req, res, db) {
     const session = await db.get("SELECT * FROM sessions WHERE id = ?", [result.lastID]);
     // Get initial participants (should be empty)
     const participants = await db.all("SELECT u.username FROM session_users su JOIN users u ON su.user_id = u.id WHERE su.session_id = ? AND su.left_at IS NULL", [session.id]);
-    broadcastSessionUpdate({ type: "session_started", session, participants: participants.map(p => p.username), timestamp: Date.now(), duration: 20 });
+    broadcastSessionUpdate({
+      type: "session_started",
+      session,
+      participants: participants.map(p => p.username),
+      started_by,
+      timestamp: Date.now(),
+      duration: 20
+    });
     // Start timer for session end (20 seconds)
     let secondsRemaining = 20;
     const timerInterval = setInterval(() => {
@@ -87,9 +94,13 @@ export async function startSessionHandler(req, res, db) {
             broadcastSessionUpdate({ type: "prep_timer_update", seconds_remaining: prepSeconds });
           }
         }, 1000);
-        setTimeout(() => {
+        setTimeout(async () => {
           clearInterval(prepInterval);
           broadcastSessionUpdate({ type: "prep_timer_done" });
+          // Automatically start a new session after prep timer
+          // Use a system user or null for started_by
+          const started_by = null; // or a system user ID if you want
+          await startSessionHandler({ body: { started_by } }, { json: () => {} }, db);
         }, 20000);
       } catch (err) {
         // Log error but don't crash
@@ -107,9 +118,79 @@ export async function joinSessionHandler(req, res, db) {
   if (!user_id) return res.status(400).json({ error: "User ID required" });
   try {
     // Get current session
-    const session = await db.get("SELECT * FROM sessions WHERE end_time IS NULL ORDER BY start_time DESC LIMIT 1");
-    if (!session) return res.status(404).json({ error: "No active session" });
-    // Check if user already joined
+    let session = await db.get("SELECT * FROM sessions WHERE end_time IS NULL ORDER BY start_time DESC LIMIT 1");
+    if (!session) {
+      // No active session, start a new one with this user as starter
+      const now = new Date().toISOString();
+      const result = await db.run("INSERT INTO sessions (started_by, start_time) VALUES (?, ?)", [user_id, now]);
+      session = await db.get("SELECT * FROM sessions WHERE id = ?", [result.lastID]);
+      // Add user as participant
+      await db.run("INSERT INTO session_users (session_id, user_id) VALUES (?, ?)", [session.id, user_id]);
+      // Get username for started_by
+      const starter = await db.get("SELECT username FROM users WHERE id = ?", [user_id]);
+      // Get all participants (should be just the starter at this point)
+      const participants = await db.all("SELECT u.username FROM session_users su JOIN users u ON su.user_id = u.id WHERE su.session_id = ? AND su.left_at IS NULL", [session.id]);
+      broadcastSessionUpdate({
+        type: "session_started",
+        session,
+        participants: participants.map(p => p.username),
+        started_by: starter.username,
+        timestamp: Date.now(),
+        duration: 20
+      });
+      // Start timer for session end (20 seconds)
+      let secondsRemaining = 20;
+      const timerInterval = setInterval(() => {
+        secondsRemaining -= 1;
+        if (secondsRemaining > 0) {
+          broadcastSessionUpdate({ type: "timer_update", session_id: session.id, seconds_remaining: secondsRemaining });
+        }
+      }, 1000);
+      setTimeout(async () => {
+        clearInterval(timerInterval);
+        // End session logic (same as startSessionHandler)
+        const activeSession = await db.get("SELECT * FROM sessions WHERE id = ? AND end_time IS NULL", [session.id]);
+        if (!activeSession) return;
+        const winning_number = Math.floor(Math.random() * 9) + 1;
+        try {
+          await db.run("UPDATE sessions SET end_time = CURRENT_TIMESTAMP, winning_number = ? WHERE id = ?", [winning_number, session.id]);
+          await db.run("UPDATE session_users SET is_winner = 1 WHERE session_id = ? AND picked_number = ?", [session.id, winning_number]);
+          const winners = await db.all("SELECT u.username FROM session_users su JOIN users u ON su.user_id = u.id WHERE su.session_id = ? AND su.is_winner = 1", [session.id]);
+          for (const winner of winners) {
+            await db.run("UPDATE users SET wins = wins + 1 WHERE username = ?", [winner.username]);
+          }
+          const participants = await db.all("SELECT u.username FROM session_users su JOIN users u ON su.user_id = u.id WHERE su.session_id = ?", [session.id]);
+          broadcastSessionUpdate({
+            type: "session_ended",
+            session_id: session.id,
+            winning_number,
+            winners: winners.map(w => w.username),
+            participants: participants.map(p => p.username),
+            timestamp: Date.now()
+          });
+          // Prep timer for next session
+          let prepSeconds = 20;
+          const prepInterval = setInterval(() => {
+            prepSeconds -= 1;
+            if (prepSeconds > 0) {
+              broadcastSessionUpdate({ type: "prep_timer_update", seconds_remaining: prepSeconds });
+            }
+          }, 1000);
+          setTimeout(async () => {
+            clearInterval(prepInterval);
+            broadcastSessionUpdate({ type: "prep_timer_done" });
+            // Broadcast gameover event to reset frontend state
+            broadcastSessionUpdate({ type: "gameover" });
+            // Automatically start a new session after prep timer
+            await joinSessionHandler({ body: { user_id: null } }, { json: () => {} }, db);
+          }, 20000);
+        } catch (err) {
+          console.error("Failed to auto-end session:", err);
+        }
+      }, 20000);
+      return res.json({ success: true, sessionId: session.id });
+    }
+    // If session exists, add user as participant if not already joined
     const alreadyJoined = await db.get("SELECT * FROM session_users WHERE session_id = ? AND user_id = ? AND left_at IS NULL", [session.id, user_id]);
     if (alreadyJoined) return res.status(409).json({ error: "User already in session" });
     // Check session user cap (default 10, can be set via env)
@@ -117,11 +198,11 @@ export async function joinSessionHandler(req, res, db) {
     const userCount = await db.get("SELECT COUNT(*) as count FROM session_users WHERE session_id = ? AND left_at IS NULL", [session.id]);
     if (userCount.count >= maxUsers) return res.status(403).json({ error: "Session is full" });
     // Add user to session
-  await db.run("INSERT INTO session_users (session_id, user_id) VALUES (?, ?)", [session.id, user_id]);
-  // Get updated participants
-  const participants = await db.all("SELECT u.username FROM session_users su JOIN users u ON su.user_id = u.id WHERE su.session_id = ? AND su.left_at IS NULL", [session.id]);
-  broadcastSessionUpdate({ type: "user_joined", session_id: session.id, user_id, participants: participants.map(p => p.username), timestamp: Date.now() });
-  res.json({ success: true });
+    await db.run("INSERT INTO session_users (session_id, user_id) VALUES (?, ?)", [session.id, user_id]);
+    // Get updated participants
+    const participants = await db.all("SELECT u.username FROM session_users su JOIN users u ON su.user_id = u.id WHERE su.session_id = ? AND su.left_at IS NULL", [session.id]);
+    broadcastSessionUpdate({ type: "user_joined", session_id: session.id, user_id, participants: participants.map(p => p.username), timestamp: Date.now() });
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Failed to join session" });
   }
@@ -173,9 +254,14 @@ export async function endSessionHandler(req, res, db) {
     // Mark session as ended
     await db.run("UPDATE sessions SET end_time = CURRENT_TIMESTAMP, winning_number = ? WHERE id = ?", [winning_number, session.id]);
     await db.run("UPDATE session_users SET is_winner = 1 WHERE session_id = ? AND picked_number = ?", [session.id, winning_number]);
-    const winners = await db.all("SELECT u.username FROM session_users su JOIN users u ON su.user_id = u.id WHERE su.session_id = ? AND su.is_winner = 1", [session.id]);
+    const winners = await db.all("SELECT u.username, u.id FROM session_users su JOIN users u ON su.user_id = u.id WHERE su.session_id = ? AND su.is_winner = 1", [session.id]);
     for (const winner of winners) {
       await db.run("UPDATE users SET wins = wins + 1 WHERE username = ?", [winner.username]);
+    }
+    // Losses: users who picked a number but did not win
+    const losers = await db.all("SELECT u.username, u.id FROM session_users su JOIN users u ON su.user_id = u.id WHERE su.session_id = ? AND (su.picked_number IS NOT NULL AND su.is_winner = 0)", [session.id]);
+    for (const loser of losers) {
+      await db.run("UPDATE users SET losses = losses + 1 WHERE id = ?", [loser.id]);
     }
     // Get all participants (users who joined this session)
     const participants = await db.all("SELECT u.username FROM session_users su JOIN users u ON su.user_id = u.id WHERE su.session_id = ?", [session.id]);

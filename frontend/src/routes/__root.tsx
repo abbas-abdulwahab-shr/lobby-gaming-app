@@ -3,7 +3,7 @@ import { TanStackRouterDevtools } from "@tanstack/router-devtools";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import Header from "../components/Header";
 import { useUser } from "../context/userContext";
-import { PrepTimerProvider } from "../context/prepTimerContext";
+import { SessionProvider } from "../context/sessionContext";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect } from "react";
 
@@ -21,10 +21,10 @@ export const Route = createRootRoute({
 
     return (
       <>
-        <PrepTimerProvider>
+        <SessionProvider>
           <Header />
           <Outlet />
-        </PrepTimerProvider>
+        </SessionProvider>
 
         <TanStackRouterDevtools position="bottom-left" />
         <ReactQueryDevtools />

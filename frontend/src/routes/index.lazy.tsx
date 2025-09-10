@@ -2,7 +2,7 @@ import { createLazyFileRoute } from "@tanstack/react-router";
 import { useUser } from "../context/userContext";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
-import { usePrepTimer } from "../context/prepTimerContext";
+import { useSession } from "../context/sessionContext";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 
@@ -10,34 +10,55 @@ const Index: React.FC = () => {
   const { user } = useUser();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const { prepSeconds, prepActive, activeSession } = usePrepTimer();
-  const disableStartButton = prepActive || prepSeconds > 0 || activeSession;
+  const {
+    prepSeconds,
+    prepActive,
+    participants,
+    startedBy,
+    countdown,
+    activeSession,
+  } = useSession();
+  // Defensive: user.username may be undefined, so check user and username
+  const isParticipant = Boolean(
+    user && user.username && participants.includes(user.username),
+  );
+  const maxUsers = 10; // Can be dynamic if needed
 
-  const handleGameSessionStart = async () => {
+  const disableStartButton =
+    prepActive ||
+    prepSeconds > 0 ||
+    isParticipant ||
+    participants.length >= maxUsers;
+
+  // Determine if user is in session
+
+  const canShowTimer = countdown > 0 && activeSession;
+
+  const handleJoinSession = async () => {
     if (!user) {
-      alert("You must be logged in to start a session");
+      alert("You must be logged in to join a session");
       router.navigate({ to: "/auth" });
       return;
     }
 
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/session/start`, {
+      const res = await fetch(`${API_BASE}/api/session/join`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${user?.token}`,
         },
-        body: JSON.stringify({ started_by: user?.user_id }),
+        body: JSON.stringify({ user_id: user?.user_id }),
       });
       if (!res.ok) {
-        alert("Failed to start session");
+        const data = await res.json();
+        alert(data.error || "Failed to join session");
         return;
       }
-      // Optionally, you can get sessionId from response
       router.navigate({ to: "/game" });
     } catch (err) {
-      alert("Error starting session");
+      alert("Error joining session");
     } finally {
       setLoading(false);
     }
@@ -65,13 +86,21 @@ const Index: React.FC = () => {
             Pick a number and see if you are the lucky winner.
           </p>
         </div>
+        {startedBy && (
+          <div className="text-center text-base text-gray-600 mb-2">
+            <span className="font-semibold text-blue-700">
+              Session started by:
+            </span>{" "}
+            {startedBy}
+          </div>
+        )}
         <button
           className={`relative inline-flex items-center justify-center px-6 py-3 font-bold text-white bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-lg shadow-lg transition-transform transform hover:scale-105 hover:from-indigo-600 hover:to-pink-600 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${disableStartButton ? "opacity-50 cursor-not-allowed" : ""}`}
-          onClick={disableStartButton ? undefined : handleGameSessionStart}
+          onClick={disableStartButton ? undefined : handleJoinSession}
           disabled={disableStartButton}
         >
           <span className="mr-2">🎮</span>
-          Start Game Session
+          {maxUsers <= participants.length ? "Session Full" : "Join"}
           {loading && (
             <span className="ml-4 flex items-center">
               <svg
@@ -97,6 +126,14 @@ const Index: React.FC = () => {
             </span>
           )}
         </button>
+        {canShowTimer && (
+          <div className="flex flex-col items-center gap-2 mt-2">
+            <span className="text-gray-700">Session closes in:</span>
+            <span className="text-3xl font-mono" aria-live="polite">
+              {countdown.toString().padStart(2, "0")}
+            </span>
+          </div>
+        )}
         {prepActive && (
           <div className="text-center text-lg font-semibold text-red-600 mt-2">
             New session can be started in:{" "}

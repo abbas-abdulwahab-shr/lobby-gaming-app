@@ -1,28 +1,32 @@
 import { createLazyFileRoute } from "@tanstack/react-router";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, use } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useUser } from "../context/userContext";
-import { usePrepTimer } from "../context/prepTimerContext";
+import { useSession } from "../context/sessionContext";
+import { useRouter } from "@tanstack/react-router";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 
 const Game: React.FC = () => {
   const { user } = useUser();
-  const { prepSeconds, prepActive } = usePrepTimer();
+  const {
+    prepSeconds,
+    prepActive,
+    activeSession,
+    sessionId,
+    startedBy,
+    participants,
+    winners,
+    winningNumber,
+    sessionEnded,
+    countdown,
+  } = useSession();
   const [selected, setSelected] = useState<number | null>(null);
   const [hasPicked, setHasPicked] = useState(false);
-  const [sessionEnded, setSessionEnded] = useState(false);
-  const [participants, setParticipants] = useState<string[]>([]);
-  const [winners, setWinners] = useState<string[]>([]);
-  const [winningNumber, setWinningNumber] = useState<number | null>(null);
-  const [inSession, setInSession] = useState(false);
-  const [hasJoinedSession, setHasJoinedSession] = useState(false);
 
-  // Add session state for countdown and max users
-  const [maxUsers, setMaxUsers] = useState(10);
-  const [countdown, setCountdown] = useState(0);
+  const router = useRouter();
 
-  // Real pick mutation
+  // Play view mutation
   const mutation = useMutation({
     mutationFn: async (pick: number) => {
       if (!user) throw new Error("Not logged in");
@@ -44,52 +48,7 @@ const Game: React.FC = () => {
     },
   });
 
-  // SSE integration
-  useEffect(() => {
-    const eventSource = new EventSource(`${API_BASE}/api/session/stream`);
-    eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      switch (data.type) {
-        case "session_started":
-          setSessionEnded(false);
-          setHasPicked(false);
-          setSelected(null);
-          setParticipants(data.participants || []);
-          setWinners([]);
-          setWinningNumber(null);
-          setInSession(data.participants?.includes(user?.username ?? ""));
-          setMaxUsers(data.maxUsers);
-          // Use backend duration for countdown
-          setCountdown(data.duration);
-          break;
-        case "timer_update":
-          // Sync countdown with backend
-          setCountdown(data.seconds_remaining);
-          break;
-        case "user_joined":
-        case "user_left":
-          setParticipants(data.participants || []);
-          setInSession(data.participants?.includes(user?.username ?? ""));
-          break;
-        case "number_picked":
-          break;
-        case "session_ended":
-          setSessionEnded(true);
-          setWinners(data.winners || []);
-          setWinningNumber(data.winning_number || null);
-          break;
-        default:
-          break;
-      }
-    };
-    eventSource.onerror = () => {
-      eventSource.close();
-    };
-    return () => {
-      eventSource.close();
-    };
-  }, [user]);
-
+  // Join session logic
   const handleJoinSession = async () => {
     if (!user) return;
     try {
@@ -105,58 +64,82 @@ const Game: React.FC = () => {
         alert("Failed to join session");
         return;
       }
-      // Set hasJoinedSession to true only on successful join
-      setHasJoinedSession(true);
-      setInSession(true);
-
-      if (!participants.includes(user.username)) {
-        setParticipants([...participants, user.username]);
-      }
+      // No need to update local state, context will sync via SSE
     } catch (err) {
       alert("Error joining session");
     }
   };
 
-  // Play view
   const handlePick = (num: number) => {
+    if (hasPicked || mutation.isPending) return;
     setSelected(num);
     mutation.mutate(num);
   };
 
-  if (!hasJoinedSession && !sessionEnded) {
-    // Lobby view
-    const canJoin = countdown > 0 && participants.length < maxUsers;
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
-        <section className="w-full max-w-md bg-white rounded-lg shadow-md p-6 flex flex-col gap-6">
-          <h1 className="text-2xl font-bold text-center">Game Lobby</h1>
-          <button
-            className={`bg-green-600 text-white py-2 rounded-md font-semibold hover:bg-green-700 focus:ring-2 focus:ring-green-500 focus:outline-none ${!canJoin ? "opacity-50 cursor-not-allowed" : ""}`}
-            aria-label="Join session"
-            disabled={!canJoin}
-            onClick={canJoin ? handleJoinSession : undefined}
-          >
-            {canJoin
-              ? "Join Session"
-              : participants.length >= maxUsers
-                ? "Session Full"
-                : countdown === 0
-                  ? "No Active Session"
-                  : "Join Session"}
-          </button>
-          {canJoin && (
-            <div className="flex flex-col items-center gap-2">
-              <span className="text-gray-700">Session closes in:</span>
-              <span className="text-3xl font-mono" aria-live="polite">
-                {countdown.toString().padStart(2, "0")}
-              </span>
-            </div>
-          )}
-        </section>
-      </main>
-    );
-  } else if (hasJoinedSession && !sessionEnded) {
-    // Play view
+  const handleLeaveSession = async () => {
+    if (!selected && user) {
+      const res = await fetch(`${API_BASE}/api/session/leave`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${user.token}`,
+        },
+        body: JSON.stringify({ user_id: user.user_id }),
+      });
+      if (res.ok) {
+        router.navigate({ to: "/" });
+      }
+    }
+  };
+
+  // Determine if user is in session
+  const inSession = user && participants.includes(user.username);
+  const maxUsers = 10; // Can be dynamic if needed
+  const canJoin = countdown > 0 && participants.length < maxUsers && !inSession;
+
+  // Lobby view
+  // if (!inSession && !sessionEnded) {
+  //   return (
+  //     <main className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
+  //       <section className="w-full max-w-md bg-white rounded-lg shadow-md p-6 flex flex-col gap-6">
+  //         <h1 className="text-2xl font-bold text-center">Game Lobby</h1>
+  //         {startedBy && (
+  //           <div className="text-center text-base text-gray-600 mb-2">
+  //             <span className="font-semibold text-blue-700">
+  //               Session started by:
+  //             </span>{" "}
+  //             {startedBy || "System"}
+  //           </div>
+  //         )}
+  //         <button
+  //           className={`bg-green-600 text-white py-2 rounded-md font-semibold hover:bg-green-700 focus:ring-2 focus:ring-green-500 focus:outline-none ${!canJoin ? "opacity-50 cursor-not-allowed" : ""}`}
+  //           aria-label="Join session"
+  //           disabled={!canJoin}
+  //           onClick={canJoin ? handleJoinSession : undefined}
+  //         >
+  //           {canJoin
+  //             ? "Join Session"
+  //             : participants.length >= maxUsers
+  //               ? "Session Full"
+  //               : countdown === 0
+  //                 ? "No Active Session"
+  //                 : "Join Session"}
+  //         </button>
+  //         {canJoin && (
+  //           <div className="flex flex-col items-center gap-2">
+  //             <span className="text-gray-700">Session closes in:</span>
+  //             <span className="text-3xl font-mono" aria-live="polite">
+  //               {countdown.toString().padStart(2, "0")}
+  //             </span>
+  //           </div>
+  //         )}
+  //       </section>
+  //     </main>
+  //   );
+  // }
+
+  // Play view
+  if (inSession && !sessionEnded) {
     return (
       <main className="relative flex min-h-[93vh] items-center justify-center bg-gray-50 p-4">
         <span
@@ -193,6 +176,16 @@ const Game: React.FC = () => {
             {participants.length} user{participants.length !== 1 ? "s" : ""}{" "}
             joined
           </div>
+          <div className="text-center mt-2">
+            <button
+              className={`bg-red-600 text-white py-2 rounded-md font-semibold hover:bg-red-700 focus:ring-2 focus:ring-red-500 focus:outline-none transition ${selected ? "opacity-50 cursor-not-allowed" : ""}`}
+              disabled={hasPicked || mutation.isPending}
+              onClick={handleLeaveSession}
+              aria-label="Leave session"
+            >
+              Leave Session
+            </button>
+          </div>
           {mutation.status === "pending" && (
             <div className="text-center text-lg font-semibold" role="status">
               Checking result...
@@ -202,6 +195,8 @@ const Game: React.FC = () => {
       </main>
     );
   }
+
+  // Result view
   if (sessionEnded) {
     return (
       <main className="flex min-h-[93vh] items-center justify-center bg-gray-50 p-0 md:p-4">
@@ -247,15 +242,15 @@ const Game: React.FC = () => {
               )}
             </div>
 
-            <div className="flex flex-col items-center gap-2 w-full">
+            <div className="flex flex-col items-center gap-1 w-full">
               <span className="text-gray-500 text-base">Total Players</span>
-              <span className="text-3xl font-bold text-gray-800">
+              <span className="text-2xl font-bold text-gray-800">
                 {participants.length}
               </span>
             </div>
-            <div className="flex flex-col items-center gap-2 w-full">
+            <div className="flex flex-col items-center gap-1 w-full">
               <span className="text-gray-500 text-base">Total Wins</span>
-              <span className="text-3xl font-bold text-green-600">
+              <span className="text-2xl font-bold text-green-600">
                 {winners.length}
               </span>
             </div>
@@ -295,7 +290,31 @@ const Game: React.FC = () => {
       </main>
     );
   }
-  return null;
+  return (
+    <main className="flex min-h-[93vh] items-center justify-center bg-gray-50">
+      <section className="bg-white rounded-xl shadow-lg py-20 px-32 flex flex-col items-center gap-6">
+        <h1 className="text-5xl font-extrabold text-red-600 mb-2 animate-pulse">
+          Game Over
+        </h1>
+        <p className="text-lg text-gray-700 text-center">
+          The game session has ended.
+          <br />
+          return to the lobby.
+        </p>
+        <a
+          href="/"
+          className="bg-blue-600 text-white px-6 py-2 rounded-md font-semibold hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
+        >
+          Return to Lobby
+        </a>
+        <div className="mt-4 flex flex-col items-center">
+          <span className="text-2xl font-bold text-gray-800">
+            Thanks for playing!
+          </span>
+        </div>
+      </section>
+    </main>
+  );
 };
 
 export const Route = createLazyFileRoute("/game")({
