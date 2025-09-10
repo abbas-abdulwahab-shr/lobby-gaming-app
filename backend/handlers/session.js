@@ -115,7 +115,13 @@ export async function startSessionHandler(req, res, db) {
 
 export async function joinSessionHandler(req, res, db) {
   const { user_id } = req.body;
-  if (!user_id) return res.status(400).json({ error: "User ID required" });
+  // If called internally (automation), res may be a dummy object
+  const isInternal = !(res && typeof res.status === "function" && typeof res.json === "function");
+  if (!user_id) {
+    if (!isInternal) return res.status(400).json({ error: "User ID required" });
+    // Internal call: just return silently
+    return;
+  }
   try {
     // Get current session
     let session = await db.get("SELECT * FROM sessions WHERE end_time IS NULL ORDER BY start_time DESC LIMIT 1");
@@ -188,21 +194,31 @@ export async function joinSessionHandler(req, res, db) {
           console.error("Failed to auto-end session:", err);
         }
       }, 20000);
-      return res.json({ success: true, sessionId: session.id });
+  if (!isInternal) return res.json({ success: true, sessionId: session.id });
+  // Internal call: just return silently
+  return;
     }
     // If session exists, add user as participant if not already joined
     const alreadyJoined = await db.get("SELECT * FROM session_users WHERE session_id = ? AND user_id = ? AND left_at IS NULL", [session.id, user_id]);
-    if (alreadyJoined) return res.status(409).json({ error: "User already in session" });
+    if (alreadyJoined) {
+      if (!isInternal) return res.status(409).json({ error: "User already in session" });
+      // Internal call: just return silently
+      return;
+    }
     // Check session user cap (default 10, can be set via env)
     const maxUsers = parseInt(process.env.SESSION_USER_CAP || "10", 10);
     const userCount = await db.get("SELECT COUNT(*) as count FROM session_users WHERE session_id = ? AND left_at IS NULL", [session.id]);
-    if (userCount.count >= maxUsers) return res.status(403).json({ error: "Session is full" });
+    if (userCount.count >= maxUsers) {
+      if (!isInternal) return res.status(403).json({ error: "Session is full" });
+      // Internal call: just return silently
+      return;
+    }
     // Add user to session
     await db.run("INSERT INTO session_users (session_id, user_id) VALUES (?, ?)", [session.id, user_id]);
     // Get updated participants
     const participants = await db.all("SELECT u.username FROM session_users su JOIN users u ON su.user_id = u.id WHERE su.session_id = ? AND su.left_at IS NULL", [session.id]);
     broadcastSessionUpdate({ type: "user_joined", session_id: session.id, user_id, participants: participants.map(p => p.username), timestamp: Date.now() });
-    res.json({ success: true });
+  if (!isInternal) res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Failed to join session" });
   }
